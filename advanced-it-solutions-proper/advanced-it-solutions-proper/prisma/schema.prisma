@@ -1,0 +1,556 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SystemRole {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  EMPLOYEE
+  CUSTOMER
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+  DEACTIVATED
+}
+
+enum ProductType {
+  DIGITAL_LICENSE
+  SUBSCRIPTION
+  VIRTUAL_NUMBER
+  SMS_SERVICE
+  PROXY_RESIDENTIAL
+  PROXY_DATACENTER
+  PHYSICAL_HARDWARE
+  IT_SERVICE
+}
+
+enum PricingMode {
+  FIXED_PRICE
+  SUPPLIER_MARKUP_PERCENT
+  SUPPLIER_MARKUP_FIXED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_FAILED
+  PAID
+  PROCESSING
+  PROVISIONING_SUPPLIER
+  PARTIALLY_COMPLETED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  SSLCOMMERZ
+  BKASH_MERCHANT
+  NAGAD_MERCHANT
+  STRIPE
+  MANUAL_BANK_VERIFIED
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING_VERIFICATION
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum RefundStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PROCESSED
+}
+
+enum TaskStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        SystemRole   @unique
+  description String?
+  permissions Permission[]
+  users       User[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  module      String
+  description String?
+  roles       Role[]
+  createdAt   DateTime @default(now())
+}
+
+model User {
+  id                String        @id @default(cuid())
+  email             String        @unique
+  passwordHash      String
+  fullName          String
+  phone             String?
+  countryCode       String        @default("US")
+  preferredCurrency String        @default("USD")
+  roleId            String
+  role              Role          @relation(fields: [roleId], references: [id])
+  status            AccountStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt   DateTime?
+  mfaEnabled        Boolean       @default(false)
+  mfaSecretEnc      String?
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+
+  customerProfile   CustomerProfile?
+  employeeProfile   Employee?
+  sessions          Session[]
+  orders            Order[]
+  reviewedTasks     EmployeeTask[]    @relation("TaskReviewer")
+  processedPayouts  EmployeePayout[]  @relation("PayoutProcessor")
+  processedRefunds  Refund[]          @relation("RefundProcessor")
+  notifications     Notification[]
+  supportTickets    SupportTicket[]   @relation("TicketCreator")
+  assignedTickets   SupportTicket[]   @relation("TicketAssignee")
+  ticketMessages    TicketMessage[]
+  auditLogs         AuditLog[]
+
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique
+  ipAddress    String?
+  userAgent    String?
+  mfaVerified  Boolean  @default(false)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
+model CustomerProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName     String?
+  taxId           String?
+  billingAddress  Json?
+  shippingAddress Json?
+  totalSpentUsd   Decimal  @default(0.00) @db.Decimal(14, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Employee {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode    String   @unique
+  department      String
+  designation     String
+  defaultTaskRate Decimal? @db.Decimal(12, 2)
+  currency        String   @default("BDT")
+  joinedAt        DateTime @default(now())
+  isActive        Boolean  @default(true)
+
+  payoutProfile   EmployeePayoutProfile?
+  tasks           EmployeeTask[]
+  earnings        EmployeeEarning[]
+  payouts         EmployeePayout[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model EmployeePayoutProfile {
+  id                  String   @id @default(cuid())
+  employeeId          String   @unique
+  employee            Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payoutMethod        String
+  bankOrProviderName  String
+  accountHolderName   String
+  accountNumberEnc    String
+  accountLast4        String
+  routingOrSwiftEnc   String?
+  branchName          String?
+  isVerified          Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String?
+  iconName    String?
+  parentId    String?
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  sortOrder   Int        @default(0)
+  isActive    Boolean    @default(true)
+  products    Product[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Supplier {
+  id                 String            @id @default(cuid())
+  name               String
+  code               String            @unique
+  baseUrl            String
+  apiKeyEnc          String
+  apiSecretEnc       String?
+  webhookSecretEnc   String?
+  adapterConfig      Json?
+  cachedBalance      Decimal?          @db.Decimal(14, 4)
+  balanceCurrency    String            @default("USD")
+  lastBalanceSyncAt  DateTime?
+  isActive           Boolean           @default(true)
+  complianceVerified Boolean           @default(false)
+
+  supplierProducts   SupplierProduct[]
+  transactions       SupplierApiTransaction[]
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+model SupplierProduct {
+  id                String   @id @default(cuid())
+  supplierId        String
+  supplier          Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  externalServiceId String
+  externalName      String
+  costPrice         Decimal  @db.Decimal(14, 4)
+  costCurrency      String   @default("USD")
+  availableStock    Int?
+  metadata          Json?
+  lastSyncedAt      DateTime @default(now())
+
+  linkedProducts    Product[]
+
+  @@unique([supplierId, externalServiceId])
+}
+
+model Product {
+  id                String           @id @default(cuid())
+  categoryId        String
+  category          Category         @relation(fields: [categoryId], references: [id])
+  supplierProductId String?
+  supplierProduct   SupplierProduct? @relation(fields: [supplierProductId], references: [id])
+
+  title             String
+  slug              String           @unique
+  sku               String           @unique
+  shortDescription  String
+  description       String           @db.Text
+  productType       ProductType
+  deliveryMethod    String
+  images            String[]
+
+  pricingMode       PricingMode      @default(FIXED_PRICE)
+  costPrice         Decimal          @default(0.00) @db.Decimal(14, 4)
+  markupValue       Decimal          @default(0.00) @db.Decimal(10, 4)
+  sellingPriceUsd   Decimal          @db.Decimal(14, 2)
+  sellingPriceBdt   Decimal          @db.Decimal(14, 2)
+  compareAtPriceUsd Decimal?         @db.Decimal(14, 2)
+
+  stockQuantity     Int?
+  requiresShipping  Boolean          @default(false)
+  isFeatured        Boolean          @default(false)
+  isActive          Boolean          @default(true)
+  complianceNotes   String?
+
+  orderItems        OrderItem[]
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+model Order {
+  id               String      @id @default(cuid())
+  orderNumber      String      @unique
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
+  status           OrderStatus @default(PENDING_PAYMENT)
+  currency         String      @default("USD")
+  exchangeRateUsed Decimal     @default(1.000000) @db.Decimal(14, 6)
+
+  subtotalAmount   Decimal     @db.Decimal(14, 2)
+  discountAmount   Decimal     @default(0.00) @db.Decimal(14, 2)
+  taxAmount        Decimal     @default(0.00) @db.Decimal(14, 2)
+  totalAmount      Decimal     @db.Decimal(14, 2)
+  estimatedProfit  Decimal     @default(0.00) @db.Decimal(14, 2)
+
+  shippingAddress  Json?
+  customerNotes    String?
+  idempotencyKey   String      @unique
+
+  items            OrderItem[]
+  payments         Payment[]
+  refunds          Refund[]
+  supplierTxns     SupplierApiTransaction[]
+
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+}
+
+model OrderItem {
+  id                  String   @id @default(cuid())
+  orderId             String
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId           String
+  product             Product  @relation(fields: [productId], references: [id])
+
+  productTitleSnap    String
+  quantity            Int
+  unitCostSnap        Decimal  @db.Decimal(14, 4)
+  unitPrice           Decimal  @db.Decimal(14, 2)
+  totalPrice          Decimal  @db.Decimal(14, 2)
+
+  fulfillmentStatus   String   @default("PENDING")
+  deliveredPayloadEnc String?
+  deliveredAt         DateTime?
+
+  supplierTxns        SupplierApiTransaction[]
+}
+
+model SupplierApiTransaction {
+  id              String    @id @default(cuid())
+  supplierId      String
+  supplier        Supplier  @relation(fields: [supplierId], references: [id])
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id])
+  orderItemId     String
+  orderItem       OrderItem @relation(fields: [orderItemId], references: [id])
+
+  idempotencyKey  String    @unique
+  externalTxnId   String?
+  endpointCalled  String
+  requestPayload  Json?
+  responsePayload Json?
+  httpStatus      Int?
+  costCharged     Decimal?  @db.Decimal(14, 4)
+  status          String
+  retryCount      Int       @default(0)
+  errorMessage    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Payment {
+  id                  String          @id @default(cuid())
+  orderId             String
+  order               Order           @relation(fields: [orderId], references: [id])
+  provider            PaymentProvider
+  status              PaymentStatus   @default(INITIATED)
+  currency            String
+  amount              Decimal         @db.Decimal(14, 2)
+
+  idempotencyKey      String          @unique
+  gatewaySessionId    String?
+  gatewayTxnId        String?         @unique
+  paymentMethodDetail String?
+  webhookVerified     Boolean         @default(false)
+  rawVerificationData Json?
+  failureReason       String?
+  paidAt              DateTime?
+
+  refunds             Refund[]
+
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  orderId         String
+  order           Order        @relation(fields: [orderId], references: [id])
+  paymentId       String
+  payment         Payment      @relation(fields: [paymentId], references: [id])
+  amount          Decimal      @db.Decimal(14, 2)
+  currency        String
+  reason          String
+  status          RefundStatus @default(REQUESTED)
+  gatewayRefundId String?
+  processedById   String?
+  processedBy     User?        @relation("RefundProcessor", fields: [processedById], references: [id])
+  adminNotes      String?
+  processedAt     DateTime?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model EmployeeTask {
+  id               String     @id @default(cuid())
+  employeeId       String
+  employee         Employee   @relation(fields: [employeeId], references: [id])
+  rowOrder         Int        @default(0)
+
+  taskDate         DateTime   @default(now())
+  taskTitle        String
+  description      String?    @db.Text
+  quantity         Decimal    @default(1) @db.Decimal(10, 2)
+  unitRate         Decimal?   @db.Decimal(12, 2)
+  approvedAmount   Decimal?   @db.Decimal(12, 2)
+  currency         String     @default("BDT")
+  workLink         String?
+  employeeNotes    String?    @db.Text
+  attachmentUrls   String[]
+
+  status           TaskStatus @default(DRAFT)
+  reviewedById     String?
+  reviewedBy       User?      @relation("TaskReviewer", fields: [reviewedById], references: [id])
+  reviewNotes      String?
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+
+  earning          EmployeeEarning?
+
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+}
+
+model EmployeeEarning {
+  id          String          @id @default(cuid())
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id])
+  taskId      String          @unique
+  task        EmployeeTask    @relation(fields: [taskId], references: [id])
+  amount      Decimal         @db.Decimal(12, 2)
+  currency    String          @default("BDT")
+  isPaidOut   Boolean         @default(false)
+  payoutId    String?
+  payout      EmployeePayout? @relation(fields: [payoutId], references: [id])
+  createdAt   DateTime        @default(now())
+}
+
+model EmployeePayout {
+  id                   String            @id @default(cuid())
+  payoutReference      String            @unique
+  employeeId           String
+  employee             Employee          @relation(fields: [employeeId], references: [id])
+  totalAmount          Decimal           @db.Decimal(14, 2)
+  currency             String            @default("BDT")
+  status               PayoutStatus      @default(PENDING)
+  payoutMethodSnapshot String
+  transactionRef       String?
+  processedById        String?
+  processedBy          User?             @relation("PayoutProcessor", fields: [processedById], references: [id])
+  notes                String?
+  paidAt               DateTime?
+
+  earnings             EmployeeEarning[]
+
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+}
+
+model SupportTicket {
+  id           String          @id @default(cuid())
+  ticketNumber String          @unique
+  userId       String
+  user         User            @relation("TicketCreator", fields: [userId], references: [id])
+  assignedToId String?
+  assignedTo   User?           @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  subject      String
+  category     String
+  status       TicketStatus    @default(OPEN)
+  priority     TicketPriority  @default(MEDIUM)
+  messages     TicketMessage[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model TicketMessage {
+  id          String        @id @default(cuid())
+  ticketId    String
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User          @relation(fields: [senderId], references: [id])
+  message     String        @db.Text
+  attachments String[]
+  isInternal  Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorRole  String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}
